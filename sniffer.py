@@ -690,7 +690,7 @@ class NodeConn(asyncore.dispatcher):
 		"getaddr": msg_getaddr,
 		"ping": msg_ping
 	}
-	def __init__(self, dstaddr, dstport):
+	def __init__(self, dstaddr, dstport, handlers = {}):
 		asyncore.dispatcher.__init__(self)
 		self.dstaddr = dstaddr
 		self.dstport = dstport
@@ -701,6 +701,7 @@ class NodeConn(asyncore.dispatcher):
 		self.ver_recv = 209
 		self.last_sent = 0
 		self.state = "connecting"
+		self.handlers = handlers
 
 		#stuff version msg into sendbuf
 		vt = msg_version()
@@ -827,10 +828,15 @@ class NodeConn(asyncore.dispatcher):
 			if len(want.inv):
 				self.send_message(want)
 		elif message.command == "tx":
-			new_transaction_event(message.tx)
-
+			if 'tx' in self.handlers:
+				self.handlers['tx'](message.tx)
+			else:
+				new_transaction_event(message.tx)
 		elif message.command == "block":
-			new_block_event(message.block)
+			if 'block' in self.handlers:
+				self.handlers['block'](message.block)
+			else:
+				new_block_event(message.block)
 
 if __name__ == '__main__':
 	if len(sys.argv) == 2:
