@@ -711,7 +711,8 @@ class NodeConn(asyncore.dispatcher):
 		self.send_message(vt, True)
 		print "\n Bitcoin Network Sniffer v" + SNIFFER_VERSION
 		print " -------------------------------------------------------------------------"
-		print " Connecting to Bitcoin Node IP # " + settings['host'] + ":" + str(settings['port'])
+		print " Connecting to Bitcoin Node IP # " + dstaddr + ":" + str(dstport)
+
 		try:
 			self.connect((dstaddr, dstport))
 		except:
