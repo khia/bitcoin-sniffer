@@ -26,11 +26,18 @@ SNIFFER_VERSION = "0.0.2"
 MY_VERSION = 312
 MY_SUBVERSION = ".4"
 
+NETWORKS = {
+	"mainnet" : {"magic": "\xf9\xbe\xb4\xd9", "addr_header": "\x00"},
+	"testnet" : {"magic": "\xfa\xbf\xb5\xda", "addr_header": "\x6f"},
+	"testnet3": {"magic": "\x0b\x11\x09\x07", "addr_header": "\x6f"}
+}
+
 # Default Settings if no configuration file is given
 settings = {
 	"host": "173.242.112.53",
 	"port": 8333,
-	"debug": False
+	"debug": False,
+	"network": "mainnet"
 }
 
 def new_block_event(block):
@@ -121,7 +128,7 @@ def uint256_from_compact(c):
 	v = (c & 0xFFFFFFL) << (8 * (nbytes - 3))
 	return v
 
-def deser_vector(f, c):
+def deser_vector(f, c, net_params):
 	nit = struct.unpack("<B", f.read(1))[0]
 	if nit == 253:
 		nit = struct.unpack("<H", f.read(2))[0]
@@ -131,7 +138,7 @@ def deser_vector(f, c):
 		nit = struct.unpack("<Q", f.read(8))[0]
 	r = []
 	for i in xrange(nit):
-		t = c()
+		t = c(net_params)
 		t.deserialize(f)
 		r.append(t)
 	return r
@@ -239,11 +246,12 @@ def show_debug_msg(msg):
 		print "DEBUG: " + msg
 
 class CAddress(object):
-	def __init__(self):
+	def __init__(self, net_params):
 		self.nServices = 1
 		self.pchReserved = "\x00" * 10 + "\xff" * 2
 		self.ip = "0.0.0.0"
 		self.port = 0
+		self.net_params = net_params
 	def deserialize(self, f):
 		self.nServices = struct.unpack("<Q", f.read(8))[0]
 		self.pchReserved = f.read(12)
@@ -264,7 +272,7 @@ class CInv(object):
 		0: "Error",
 		1: "TX",
 		2: "Block"}
-	def __init__(self):
+	def __init__(self, _net_params = None):
 		self.type = 0
 		self.hash = 0L
 	def deserialize(self, f):
@@ -279,7 +287,7 @@ class CInv(object):
 		return "CInv(type=%s hash=%064x)" % (self.typemap[self.type], self.hash)
 
 class CBlockLocator(object):
-	def __init__(self):
+	def __init__(self, _net_params = None):
 		self.nVersion = MY_VERSION
 		self.vHave = []
 	def deserialize(self, f):
@@ -294,7 +302,7 @@ class CBlockLocator(object):
 		return "CBlockLocator(nVersion=%i vHave=%s)" % (self.nVersion, repr(self.vHave))
 
 class COutPoint(object):
-	def __init__(self):
+	def __init__(self, _net_params = None):
 		self.hash = 0
 		self.n = 0
 	def deserialize(self, f):
@@ -309,7 +317,7 @@ class COutPoint(object):
 		return "COutPoint(hash=%064x n=%i)" % (self.hash, self.n)
 
 class CTxIn(object):
-	def __init__(self):
+	def __init__(self, _net_params = None):
 		self.prevout = COutPoint()
 		self.scriptSig = ""
 		self.nSequence = 0
@@ -328,17 +336,19 @@ class CTxIn(object):
 		return "CTxIn(prevout=%s scriptSig=%s nSequence=%i)" % (repr(self.prevout), binascii.hexlify(self.scriptSig), self.nSequence)
 
 class CTxOut(object):
-	def __init__(self):
+	def __init__(self, net_params):
 		self.nValue = 0
 		self.scriptPubKey = ""
 		self.amount = 0
+		self.net_params = net_params
 	def deserialize(self, f):
 		self.nValue = struct.unpack("<q", f.read(8))[0]
 		self.scriptPubKey = deser_string(f)
 		self.amount = float(self.nValue / 1e8)
 		self.address = self.build_address()
 	def build_address(self):
-		return hash_160_to_bc_address(self.scriptPubKey[3:23])
+		return hash_160_to_bc_address(self.scriptPubKey[3:23],
+					      self.net_params["addr_header"])
 	def serialize(self):
 		r = ""
 		r += struct.pack("<q", self.nValue)
@@ -348,17 +358,18 @@ class CTxOut(object):
 		return "CTxOut(nValue=%i.%08i scriptPubKey=%s)" % (self.nValue // 100000000, self.nValue % 100000000, binascii.hexlify(self.scriptPubKey))
 
 class CTransaction(object):
-	def __init__(self):
+	def __init__(self, net_params):
 		self.nVersion = 1
 		self.vin = []
 		self.vout = []
 		self.nLockTime = 0
 		self.sha256 = None
 		self.hash = None
+		self.net_params = net_params
 	def deserialize(self, f):
 		self.nVersion = struct.unpack("<i", f.read(4))[0]
-		self.vin = deser_vector(f, CTxIn)
-		self.vout = deser_vector(f, CTxOut)
+		self.vin = deser_vector(f, CTxIn, self.net_params)
+		self.vout = deser_vector(f, CTxOut, self.net_params)
 		self.nLockTime = struct.unpack("<I", f.read(4))[0]
 	def serialize(self):
 		r = ""
@@ -381,7 +392,7 @@ class CTransaction(object):
 		return "CTransaction(nVersion=%i vin=%s vout=%s nLockTime=%i)" % (self.nVersion, repr(self.vin), repr(self.vout), self.nLockTime)
 
 class CBlock(object):
-	def __init__(self):
+	def __init__(self, net_params):
 		self.nVersion = 1
 		self.hashPrevBlock = 0
 		self.hashMerkleRoot = 0
@@ -391,6 +402,7 @@ class CBlock(object):
 		self.vtx = []
 		self.sha256 = None
 		self.hash = None
+		self.net_params = net_params
 	def deserialize(self, f):
 		self.nVersion = struct.unpack("<i", f.read(4))[0]
 		self.hashPrevBlock = deser_uint256(f)
@@ -398,7 +410,7 @@ class CBlock(object):
 		self.nTime = struct.unpack("<I", f.read(4))[0]
 		self.nBits = struct.unpack("<I", f.read(4))[0]
 		self.nNonce = struct.unpack("<I", f.read(4))[0]
-		self.vtx = deser_vector(f, CTransaction)
+		self.vtx = deser_vector(f, CTransaction, self.net_params)
 	def serialize(self):
 		r = ""
 		r += struct.pack("<i", self.nVersion)
@@ -444,7 +456,7 @@ class CBlock(object):
 		return "CBlock(nVersion=%i hashPrevBlock=%064x hashMerkleRoot=%064x nTime=%s nBits=%08x nNonce=%08x vtx=%s)" % (self.nVersion, self.hashPrevBlock, self.hashMerkleRoot, time.ctime(self.nTime), self.nBits, self.nNonce, repr(self.vtx))
 
 class CUnsignedAlert(object):
-	def __init__(self):
+	def __init__(self, _net_params = None):
 		self.nVersion = 1
 		self.nRelayUntil = 0
 		self.nExpiration = 0
@@ -492,7 +504,7 @@ class CUnsignedAlert(object):
 		return "CUnsignedAlert(nVersion %d, nRelayUntil %d, nExpiration %d, nID %d, nCancel %d, nMinVer %d, nMaxVer %d, nPriority %d, strComment %s, strStatusBar %s, strReserved %s)" % (self.nVersion, self.nRelayUntil, self.nExpiration, self.nID, self.nCancel, self.nMinVer, self.nMaxVer, self.nPriority, self.strComment, self.strStatusBar, self.strReserved)
 
 class CAlert(object):
-	def __init__(self):
+	def __init__(self, _net_params = None):
 		self.vchMsg = ""
 		self.vchSig = ""
 	def deserialize(self, f):
@@ -508,25 +520,26 @@ class CAlert(object):
 
 class msg_version(object):
 	command = "version"
-	def __init__(self):
+	def __init__(self, net_params):
 		self.nVersion = MY_VERSION
 		self.nServices = 1
 		self.nTime = time.time()
-		self.addrTo = CAddress()
-		self.addrFrom = CAddress()
+		self.addrTo = CAddress(net_params)
+		self.addrFrom = CAddress(net_params)
 		self.nNonce = random.getrandbits(64)
 		self.strSubVer = MY_SUBVERSION
 		self.nStartingHeight = -1
+		self.net_params = net_params
 	def deserialize(self, f):
 		self.nVersion = struct.unpack("<i", f.read(4))[0]
 		if self.nVersion == 10300:
 			self.nVersion = 300
 		self.nServices = struct.unpack("<Q", f.read(8))[0]
 		self.nTime = struct.unpack("<q", f.read(8))[0]
-		self.addrTo = CAddress()
+		self.addrTo = CAddress(self.net_params)
 		self.addrTo.deserialize(f)
 		if self.nVersion >= 106:
-			self.addrFrom = CAddress()
+			self.addrFrom = CAddress(self.net_params)
 			self.addrFrom.deserialize(f)
 			self.nNonce = struct.unpack("<Q", f.read(8))[0]
 			self.strSubVer = deser_string(f)
@@ -555,7 +568,7 @@ class msg_version(object):
 
 class msg_verack(object):
 	command = "verack"
-	def __init__(self):
+	def __init__(self, _net_params = None):
 		pass
 	def deserialize(self, f):
 		pass
@@ -566,10 +579,11 @@ class msg_verack(object):
 
 class msg_addr(object):
 	command = "addr"
-	def __init__(self):
+	def __init__(self, net_params):
 		self.addrs = []
+		self.net_params = net_params
 	def deserialize(self, f):
-		self.addrs = deser_vector(f, CAddress)
+		self.addrs = deser_vector(f, CAddress, self.net_params)
 	def serialize(self):
 		return ser_vector(self.addrs)
 	def __repr__(self):
@@ -577,7 +591,7 @@ class msg_addr(object):
 
 class msg_alert(object):
 	command = "alert"
-	def __init__(self):
+	def __init__(self, _net_params = None):
 		self.alert = CAlert()
 	def deserialize(self, f):
 		self.alert = CAlert()
@@ -591,10 +605,11 @@ class msg_alert(object):
 
 class msg_inv(object):
 	command = "inv"
-	def __init__(self):
+	def __init__(self, net_params):
 		self.inv = []
+		self.net_params = net_params
 	def deserialize(self, f):
-		self.inv = deser_vector(f, CInv)
+		self.inv = deser_vector(f, CInv, self.net_params)
 	def serialize(self):
 		return ser_vector(self.inv)
 	def __repr__(self):
@@ -602,10 +617,11 @@ class msg_inv(object):
 
 class msg_getdata(object):
 	command = "getdata"
-	def __init__(self):
+	def __init__(self, net_params):
 		self.inv = []
+		self.net_params = net_params
 	def deserialize(self, f):
-		self.inv = deser_vector(f, CInv)
+		self.inv = deser_vector(f, CInv, self.net_params)
 	def serialize(self):
 		return ser_vector(self.inv)
 	def __repr__(self):
@@ -613,7 +629,7 @@ class msg_getdata(object):
 
 class msg_getblocks(object):
 	command = "getblocks"
-	def __init__(self):
+	def __init__(self, _net_params = None):
 		self.locator = CBlockLocator()
 		self.hashstop = 0L
 	def deserialize(self, f):
@@ -630,8 +646,8 @@ class msg_getblocks(object):
 
 class msg_tx(object):
 	command = "tx"
-	def __init__(self):
-		self.tx = CTransaction()
+	def __init__(self, net_params):
+		self.tx = CTransaction(net_params)
 	def deserialize(self, f):
 		self.tx.deserialize(f)
 	def serialize(self):
@@ -641,8 +657,8 @@ class msg_tx(object):
 
 class msg_block(object):
 	command = "block"
-	def __init__(self):
-		self.block = CBlock()
+	def __init__(self, net_params):
+		self.block = CBlock(net_params)
 	def deserialize(self, f):
 		self.block.deserialize(f)
 	def serialize(self):
@@ -652,7 +668,7 @@ class msg_block(object):
 
 class msg_getaddr(object):
 	command = "getaddr"
-	def __init__(self):
+	def __init__(self, _net_params = None):
 		pass
 	def deserialize(self, f):
 		pass
@@ -667,7 +683,7 @@ class msg_getaddr(object):
 
 class msg_ping(object):
 	command = "ping"
-	def __init__(self):
+	def __init__(self, _net_params = None):
 		pass
 	def deserialize(self, f):
 		pass
@@ -690,7 +706,7 @@ class NodeConn(asyncore.dispatcher):
 		"getaddr": msg_getaddr,
 		"ping": msg_ping
 	}
-	def __init__(self, dstaddr, dstport, handlers = {}):
+	def __init__(self, dstaddr, dstport, net = "mainnet", handlers = {}):
 		asyncore.dispatcher.__init__(self)
 		self.dstaddr = dstaddr
 		self.dstport = dstport
@@ -702,9 +718,12 @@ class NodeConn(asyncore.dispatcher):
 		self.last_sent = 0
 		self.state = "connecting"
 		self.handlers = handlers
+		self.net_params = NETWORKS[net]
+
+		self.packet_magic = self.net_params["magic"]
 
 		#stuff version msg into sendbuf
-		vt = msg_version()
+		vt = msg_version(self.net_params)
 		vt.addrTo.ip = self.dstaddr
 		vt.addrTo.port = self.dstport
 		vt.addrFrom.ip = "0.0.0.0"
@@ -712,7 +731,7 @@ class NodeConn(asyncore.dispatcher):
 		self.send_message(vt, True)
 		print "\n Bitcoin Network Sniffer v" + SNIFFER_VERSION
 		print " -------------------------------------------------------------------------"
-		print " Connecting to Bitcoin Node IP # " + dstaddr + ":" + str(dstport)
+		print " Connecting to Bitcoin Node IP # %s:%s on '%s' network" % (dstaddr, dstport, net)
 
 		try:
 			self.connect((dstaddr, dstport))
@@ -756,7 +775,7 @@ class NodeConn(asyncore.dispatcher):
 		while True:
 			if len(self.recvbuf) < 4:
 				return
-			if self.recvbuf[:4] != "\xf9\xbe\xb4\xd9":
+			if self.recvbuf[:4] != self.packet_magic:
 				raise ValueError("got garbage %s" % repr(self.recvbuf))
 			if self.ver_recv < 209:
 				if len(self.recvbuf) < 4 + 12 + 4:
@@ -784,7 +803,7 @@ class NodeConn(asyncore.dispatcher):
 				self.recvbuf = self.recvbuf[4+12+4+4+msglen:]
 			if command in self.messagemap:
 				f = cStringIO.StringIO(msg)
-				t = self.messagemap[command]()
+				t = self.messagemap[command](self.net_params)
 				t.deserialize(f)
 				self.got_message(t)
 			else:
@@ -795,7 +814,7 @@ class NodeConn(asyncore.dispatcher):
 		show_debug_msg("Send %s" % repr(message))
 		command = message.command
 		data = message.serialize()
-		tmsg = "\xf9\xbe\xb4\xd9"
+		tmsg = self.packet_magic
 		tmsg += command
 		tmsg += "\x00" * (12 - len(command))
 		tmsg += struct.pack("<I", len(data))
@@ -808,18 +827,18 @@ class NodeConn(asyncore.dispatcher):
 		self.last_sent = time.time()
 	def got_message(self, message):
 		if self.last_sent + 30 * 60 < time.time():
-			self.send_message(msg_ping())
+			self.send_message(msg_ping(self.net_params))
 		show_debug_msg("Recv %s" % repr(message))
 		if message.command  == "version":
 			if message.nVersion >= 209:
-				self.send_message(msg_verack())
+				self.send_message(msg_verack(self.net_params))
 			self.ver_send = min(MY_VERSION, message.nVersion)
 			if message.nVersion < 209:
 				self.ver_recv = self.ver_send
 		elif message.command == "verack":
 			self.ver_recv = self.ver_send
 		elif message.command == "inv":
-			want = msg_getdata()
+			want = msg_getdata(self.net_params)
 			for i in message.inv:
 				if i.type == 1:
 					want.inv.append(i)
@@ -848,5 +867,6 @@ if __name__ == '__main__':
 			settings[m.group(1)] = m.group(2)
 		f.close()
 	settings['port'] = int(settings['port'])
-	c = NodeConn(settings['host'], settings['port'])
+	c = NodeConn(settings['host'], settings['port'], settings['network'])
 	asyncore.loop()
+
